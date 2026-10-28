@@ -1,0 +1,332 @@
+openapi: 3.0.3
+
+info:
+  title: Анализатор резюме
+  description: API для работы с сервисом для анализа резюме
+  version: 0.0.1
+
+servers:
+  - url: https://mega-cv-analyzer.gov/api/v1
+
+# TODO: authorization, authentication
+
+components:
+  schemas:
+    ErrorMessage:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: Описание ошибки
+
+    AnalysisResult:
+      type: object
+      properties:
+        skills:
+          type: array
+          items:
+            type: string
+
+          example: ["Вышивание крестиком", "Прыжок на 2 метра"]
+
+          description: Ключевые навыки кандидата
+
+        failures:
+          type: array
+          items:
+            type: string
+
+          example: ["Криминальное прошлое", "Омск"]
+
+          description: Сомнительные стороны кандидата
+
+        recommendation:
+          type: string
+          example: "Ссылка в Сибирь"
+          description: Рекомендация
+
+        created_at:
+          type: integer
+          description: Timestamp, когда был проведён анализ
+
+    CvShort:
+      type: object
+      required:
+        - id
+        - file_url
+        - created_at
+
+      properties:
+        id:
+          type: integer
+          example: 2000
+          description: ID резюме
+
+        file_url:
+          type: string
+          example: "http://example.com/cv.pdf"
+          description: Ссылка на файл резюме
+
+        created_at:
+          type: integer
+          description: Timestamp, когда резюме было загружено
+
+paths:
+  /cvs/upload:
+    post:
+      summary: Загрузить резюме кандидата
+      description: Добавляет файл с резюме кандидата в базу данных.
+
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+
+              required:
+                - candidate_id
+                - file
+
+              properties:
+                candidate_id:
+                  type: integer
+                  example: 100
+
+                file:
+                  type: string
+                  format: binary
+                  description: Файл с резюме
+
+      responses:
+        "200":
+          description: Резюме успешно добавлено в базу данных
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CvShort"
+
+        "400":
+          description: Ошибка клиента
+          content:
+            application/json:
+              schema:
+                discriminator:
+                  propertyName: error_name
+
+                required:
+                  - error_name
+                  - message
+
+                allOf:
+                  - $ref: "#/components/schemas/ErrorMessage"
+
+                  - oneOf:
+                      - type: object
+                        description: "Такого кандидата не существует"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["no_such_candidate"]
+
+                      - type: object
+                        description: "Файл > 20 MB"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["cv_too_large"]
+
+        "500":
+          description: Ошибка сервера
+          content:
+            application/json:
+              schema:
+                discriminator:
+                  propertyName: error_name
+
+                required:
+                  - error_name
+                  - message
+
+                allOf:
+                  - $ref: "#/components/schemas/ErrorMessage"
+
+                  - oneOf:
+                      - type: object
+                        description: "База данных переполнена"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["db_full"]
+
+  /cvs/analyze:
+    post:
+      summary: Поставить резюме кандидата в очередь на анализ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+
+              required:
+                - cv_id
+
+              properties:
+                cv_id:
+                  type: integer
+                  example: 101
+                  description: ID резюме
+
+      responses:
+        "200":
+          description: "Резюме успешно поставлено в очередь на анализ"
+          content:
+            application/json:
+              schema:
+                type: object
+
+        "400":
+          description: Ошибка клиента
+          content:
+            application/json:
+              schema:
+                discriminator:
+                  propertyName: error_name
+
+                required:
+                  - error_name
+                  - message
+
+                allOf:
+                  - $ref: "#/components/schemas/ErrorMessage"
+
+                  - oneOf:
+                      - type: object
+                        description: "Резюме уже в очереди"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["already_enqueued"]
+
+                      - type: object
+                        description: "Такого резюме не существует"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["no_such_cv"]
+
+  /cvs/analyses/{id}:
+    get:
+      summary: Получить статус анализа резюме
+
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID резюме
+
+      responses:
+        "200":
+          description: "Статус получен"
+          content:
+            application/json:
+              schema:
+                discriminator:
+                  propertyName: status
+
+                required:
+                  - status
+
+                oneOf:
+                  - type: object
+                    description: "Резюме проанализировано"
+
+                    required:
+                      - result
+
+                    properties:
+                      status:
+                        type: string
+                        enum: ["completed"]
+
+                      result:
+                        $ref: "#/components/schemas/AnalysisResult"
+
+                  - type: object
+                    description: "Резюме в очереди"
+
+                    required:
+                      - place
+
+                    properties:
+                      status:
+                        type: string
+                        enum: ["enqueued"]
+
+                      place:
+                        type: integer
+                        example: 10
+                        description: Сколько человек до вас
+
+        "400":
+          description: Ошибка клиента
+          content:
+            application/json:
+              schema:
+                discriminator:
+                  propertyName: error_name
+
+                required:
+                  - error_name
+                  - message
+
+                allOf:
+                  - $ref: "#/components/schemas/ErrorMessage"
+
+                  - oneOf:
+                      - type: object
+                        description: "Такого резюме не существует"
+
+                        properties:
+                          error_name:
+                            type: string
+                            enum: ["no_such_cv"]
+
+  /cvs:
+    get:
+      summary: Получить список резюме, которые вы загрузили
+
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Сколько резюме нужно загрузить. По умолчанию - 100
+
+        - name: offset_created_at
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: До какого timestamp нужно грузить резюме. По умолчанию - текущее время
+
+      responses:
+        "200":
+          description: Список получен
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CvShort"
